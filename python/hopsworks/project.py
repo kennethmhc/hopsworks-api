@@ -87,7 +87,7 @@ class Project:
         """Timestamp when the project was created"""
         return self._created
 
-    def get_feature_store(self):
+    def get_feature_store(self, engine="python"):
         from hsfs import connection
 
         _client = client.get_instance()
@@ -97,7 +97,7 @@ class Project:
                 port=_client._port,
                 project=self.name,
                 api_key_value=_client._auth._token,
-                engine="python",
+                engine=engine,
             ).get_feature_store()
         else:
             return connection().get_feature_store()  # If internal client
