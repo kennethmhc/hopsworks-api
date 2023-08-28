@@ -24,6 +24,7 @@ from requests.exceptions import ConnectionError
 from hopsworks.decorators import connected, not_connected
 from hopsworks import client, version
 from hopsworks.core import project_api, secret_api, variable_api
+from hopsworks import usage
 
 HOPSWORKS_PORT_DEFAULT = 443
 HOSTNAME_VERIFICATION_DEFAULT = True
@@ -90,7 +91,7 @@ class Connection:
         `Connection`. Connection handle to perform operations on a
             Hopsworks project.
     """
-
+    @usage.method_logger
     def __init__(
         self,
         host: str = None,
@@ -102,6 +103,7 @@ class Connection:
         api_key_file: str = None,
         api_key_value: str = None,
     ):
+        usage.init_usage(host)
         self._host = host
         self._port = port
         self._project = project
@@ -147,6 +149,7 @@ class Connection:
         """
         return self._project_api._create_project(name, description)
 
+    @usage.method_logger
     @connected
     def get_project(self, name: str = None):
         """Get an existing project.
