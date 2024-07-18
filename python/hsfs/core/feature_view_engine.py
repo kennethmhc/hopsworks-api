@@ -993,7 +993,7 @@ class FeatureViewEngine:
             default_write_options.update(write_options)
         fg = feature_logging.get_feature_group(transformed)
         td_predictions = [feature for feature in fv.features if feature.label]
-        td_features = [feature for feature in fv.features if feature not in td_predictions]
+        td_features = [feature for feature in fv.transformed_features if feature not in td_predictions]
         df = engine.get_instance().get_feature_logging_df(
             features_rows,
             fg=fg,
