@@ -1487,7 +1487,7 @@ class Engine:
             pd.DataFrame, list[list], np.ndarray, TypeVar("pyspark.sql.DataFrame")
         ],
         fg: FeatureGroup = None,
-        fg_features: List[TrainingDatasetFeature] = None,
+        td_features: List[TrainingDatasetFeature] = None,
         td_predictions: List[TrainingDatasetFeature] = None,
         td_col_name: Optional[str] = None,
         time_col_name: Optional[str] = None,

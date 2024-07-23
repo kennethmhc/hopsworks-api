@@ -1454,7 +1454,7 @@ class Engine:
     def get_feature_logging_df(
         features: Union[pd.DataFrame, list[list], np.ndarray],
         fg: FeatureGroup = None,
-        fg_features: List[feature.Feature] = None,
+        td_features: List[TrainingDatasetFeature] = None,
         td_predictions: List[TrainingDatasetFeature] = None,
         td_col_name: Optional[str] = None,
         time_col_name: Optional[str] = None,
@@ -1464,7 +1464,7 @@ class Engine:
         hsml_model=None,
     ) -> pd.DataFrame:
         features = Engine._convert_feature_log_to_df(
-            features, [f.name for f in fg_features]
+            features, [f.name for f in td_features]
         )
         if td_predictions:
             predictions = Engine._convert_feature_log_to_df(

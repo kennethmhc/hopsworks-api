@@ -993,12 +993,11 @@ class FeatureViewEngine:
             default_write_options.update(write_options)
         fg = feature_logging.get_feature_group(transformed)
         td_predictions = [feature for feature in fv.features if feature.label]
-        td_predictions_names = set([feature.name for feature in td_predictions])
-        fg_features = [feature for feature in fg.features if feature.name not in td_predictions_names]
+        td_features = [feature for feature in fv.features if feature not in td_predictions]
         df = engine.get_instance().get_feature_logging_df(
             features_rows,
             fg=fg,
-            fg_features=fg_features,
+            td_features=td_features,
             td_predictions=td_predictions,
             td_col_name=FeatureViewEngine._LOG_TD_VERSION,
             time_col_name=FeatureViewEngine._LOG_TIME,
