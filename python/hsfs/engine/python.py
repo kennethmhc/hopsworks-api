@@ -1454,7 +1454,7 @@ class Engine:
     def get_feature_logging_df(
         features: Union[pd.DataFrame, list[list], np.ndarray],
         fg: FeatureGroup = None,
-        fg_features: List[TrainingDatasetFeature] = None,
+        fg_features: List[feature.Feature] = None,
         td_predictions: List[TrainingDatasetFeature] = None,
         td_col_name: Optional[str] = None,
         time_col_name: Optional[str] = None,
