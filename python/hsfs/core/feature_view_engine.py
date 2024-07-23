@@ -1102,14 +1102,16 @@ class FeatureViewEngine:
     def resume_logging(self, fv):
         self._feature_view_api.resume_feature_logging(fv.name, fv.version)
 
-    def materialize_feature_logs(self, fv, wait):
-        jobs = self._feature_view_api.materialize_feature_logging(fv.name, fv.version)
+    def materialize_feature_logs(self, fv, wait, transform):
+        if transform is None:
+            jobs = [self._get_logging_fg(fv, True).materialization_job, self._get_logging_fg(fv, False).materialization_job]
+        else:
+            jobs = [self._get_logging_fg(fv, transform).materialization_job]
+        for job in jobs:
+            job.run(await_termination=False)
         if wait:
             for job in jobs:
-                try:
-                    job._wait_for_job(wait)
-                except Exception:
-                    pass
+                job._wait_for_job(wait)
         return jobs
 
     def delete_feature_logs(self, fv, feature_logging, transformed):
