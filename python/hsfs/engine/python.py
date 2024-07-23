@@ -755,7 +755,7 @@ class Engine:
                 if pd_type == "null" and feature_type_map.get(name):
                     converted_type = feature_type_map.get(name)
                 else:
-                    converted_type = self._convert_pandas_dtype_to_offline_type(pd_type)
+                    converted_type = convert_pandas_dtype_to_offline_type(pd_type)
             except ValueError as e:
                 raise FeatureStoreException(f"Feature '{name}': {str(e)}") from e
             features.append(feature.Feature(name, converted_type))
