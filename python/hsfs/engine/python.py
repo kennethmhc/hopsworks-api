@@ -1471,7 +1471,7 @@ class Engine:
                 predictions, [f.name for f in td_predictions]
             )
             for f in td_predictions:
-                predictions[f.name] = Engine._cast_column_to_offline_type(
+                predictions[f.name] = cast_column_to_offline_type(
                     predictions[f.name], f.type
                 )
             if not set(predictions.columns).intersection(set(features.columns)):
