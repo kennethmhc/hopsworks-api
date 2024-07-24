@@ -994,7 +994,12 @@ class FeatureViewEngine:
         fg = feature_logging.get_feature_group(transformed)
         td_predictions = [feature for feature in fv.features if feature.label]
         td_predictions_names = set([feature.name for feature in td_predictions])
-        td_features = [feature_name for feature_name in fv.transformed_features if feature_name not in td_predictions_names]
+        if transformed:
+            td_features = [feature_name for feature_name in fv.transformed_features if feature_name not in td_predictions_names]
+        else:
+            td_features = [feature.name for feature in
+                           fv.features if
+                           feature.name not in td_predictions_names]
         df = engine.get_instance().get_feature_logging_df(
             features_rows,
             fg=fg,
