@@ -23,6 +23,7 @@ import polars as pl
 import pyarrow as pa
 import pytest
 from hsfs import (
+    engine,
     feature,
     feature_group,
     feature_view,
@@ -42,7 +43,7 @@ from hsfs.training_dataset_feature import TrainingDatasetFeature
 from polars.testing import assert_frame_equal as polars_assert_frame_equal
 
 
-hopsworks_common.connection._hsfs_engine_type = "python"
+engine._engine_type = "python"
 
 
 class TestPython:
@@ -2553,7 +2554,7 @@ class TestPython:
     def test_apply_transformation_function_pandas(self, mocker):
         # Arrange
         mocker.patch("hopsworks_common.client.get_instance")
-        hopsworks_common.connection._hsfs_engine_type = "python"
+        engine._engine_type = "python"
         python_engine = python.Engine()
 
         @udf(int)
@@ -2593,7 +2594,7 @@ class TestPython:
     def test_apply_transformation_function_multiple_output(self, mocker):
         # Arrange
         mocker.patch("hopsworks_common.client.get_instance")
-        hopsworks_common.connection._hsfs_engine_type = "python"
+        engine._engine_type = "python"
         python_engine = python.Engine()
 
         @udf([int, int], drop=["col1"])
@@ -2637,7 +2638,7 @@ class TestPython:
         # Arrange
         mocker.patch("hopsworks_common.client.get_instance")
 
-        hopsworks_common.connection._hsfs_engine_type = "python"
+        engine._engine_type = "python"
         python_engine = python.Engine()
 
         @udf([int, int])
@@ -2688,7 +2689,7 @@ class TestPython:
         # Arrange
         mocker.patch("hopsworks_common.client.get_instance")
 
-        hopsworks_common.connection._hsfs_engine_type = "python"
+        engine._engine_type = "python"
         python_engine = python.Engine()
 
         @udf([int, int], drop=["col1", "col2"])
@@ -2734,7 +2735,7 @@ class TestPython:
         # Arrange
         mocker.patch("hopsworks_common.client.get_instance")
 
-        hopsworks_common.connection._hsfs_engine_type = "python"
+        engine._engine_type = "python"
         python_engine = python.Engine()
 
         @udf([int, int], drop=["col1"])
@@ -2782,7 +2783,7 @@ class TestPython:
         # Arrange
         mocker.patch("hopsworks_common.client.get_instance")
 
-        hopsworks_common.connection._hsfs_engine_type = "python"
+        engine._engine_type = "python"
         python_engine = python.Engine()
 
         @udf(int)
