@@ -193,12 +193,17 @@ Documentation is available at [Hopsworks Documentation](https://docs.hopsworks.a
 
 For general questions about the usage of Hopsworks and the Feature Store please open a topic on [Hopsworks Community](https://community.hopsworks.ai/).
 
-Please report any issue using [Github issue tracking](https://github.com/logicalclocks/hopsworks-api/issues) and attach the client environment from the output below to your issue:
+Please report any issue using [Github issue tracking](https://github.com/logicalclocks/hopsworks-api/issues).
+
+### Related to Feautre Store API
+
+Please attach the client environment from the output below to your issue, if it is related to Feature Store API:
 
 ```python
 import hopsworks
-hopsworks.login()
-print(hopsworks.get_sdk_info())
+import hsfs
+hopsworks.login().get_feature_store()
+print(hsfs.get_env())
 ```
 
 ## Contributing
