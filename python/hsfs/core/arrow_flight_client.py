@@ -134,6 +134,7 @@ class ArrowFlightClient:
     SUPPORTED_EXTERNAL_CONNECTORS = [
         StorageConnector.SNOWFLAKE,
         StorageConnector.BIGQUERY,
+        StorageConnector.S3,
     ]
     READ_ERROR = "Could not read data using Hopsworks Feature Query Service."
     WRITE_ERROR = 'Could not write data using Hopsworks Feature Query Service. If the issue persists, use write_options={"use_spark": True} instead.'
@@ -536,7 +537,7 @@ class ArrowFlightClient:
 
 def _serialize_featuregroup_connector(fg, query, on_demand_fg_aliases):
     connector = {}
-    if isinstance(fg, feature_group.ExternalFeatureGroup):
+    if isinstance(fg, feature_group.ExternalFeatureGroup) or fg.time_travel_format == "delta":
         connector["type"] = fg.storage_connector.type
         connector["options"] = fg.storage_connector.connector_options()
         connector["query"] = fg.query[:-1] if fg.query.endswith(";") else fg.query
