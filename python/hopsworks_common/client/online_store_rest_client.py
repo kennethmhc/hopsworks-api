@@ -17,7 +17,9 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
+from typing import Callable
 from warnings import warn
 
 import requests
@@ -307,24 +309,45 @@ class OnlineStoreRestClientSingleton:
         path_params: list[str],
         headers: dict[str, Any] | None = None,
         data: str | None = None,
+        profiling_hook: Callable[[str, float], None] | None = None,
     ) -> requests.Response:
+        if profiling_hook is not None:
+            t0 = time.perf_counter()
         url = self._base_url.copy()
         url.path.segments.extend(path_params)
+        if profiling_hook is not None:
+            profiling_hook("http_build_url", time.perf_counter() - t0)
         if _logger.isEnabledFor(logging.DEBUG):
             _logger.debug(f"Sending {method} request to {url.url}.")
             _logger.debug(f"Provided Data: {data}")
             _logger.debug(f"Provided Headers: {headers}")
+        if profiling_hook is not None:
+            t0 = time.perf_counter()
         prepped_request = self._session.prepare_request(
             requests.Request(
                 method, url=url.url, headers=headers, data=data, auth=self.auth
             )
         )
+        if profiling_hook is not None:
+            profiling_hook("http_prepare_request", time.perf_counter() - t0)
         timeout = self._current_config[self.TIMEOUT]
-        return self._session.send(
+        if profiling_hook is not None:
+            t0 = time.perf_counter()
+        response = self._session.send(
             prepped_request,
             # compatibility with 3.7
             timeout=timeout if timeout < 500 else timeout / 1000,
         )
+        if profiling_hook is not None:
+            http_send_elapsed = time.perf_counter() - t0
+            profiling_hook("http_send", http_send_elapsed)
+            # requests.Response.elapsed approximates time-to-first-byte.
+            http_ttfb = max(0.0, response.elapsed.total_seconds())
+            if http_ttfb > http_send_elapsed:
+                http_ttfb = http_send_elapsed
+            profiling_hook("http_ttfb", http_ttfb)
+            profiling_hook("http_body_download", http_send_elapsed - http_ttfb)
+        return response
 
     def _check_hopsworks_connection(self) -> None:
         if _logger.isEnabledFor(logging.DEBUG):

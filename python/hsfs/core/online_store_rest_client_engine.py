@@ -18,12 +18,13 @@ from __future__ import annotations
 import base64
 import itertools
 import logging
+import time
 from datetime import datetime
 from typing import Any
 
 from hsfs import training_dataset_feature as td_feature_mod
 from hsfs import util
-from hsfs.core import online_store_rest_client_api
+from hsfs.core import online_store_rest_client_api, serving_profiler
 
 
 _logger = logging.getLogger(__name__)
@@ -227,11 +228,15 @@ class OnlineStoreRestClientEngine:
             hopsworks.client.exceptions.RestAPIError: If the server response status code is not 200.
             ValueError: If the length of the feature values and metadata in the reponse does not match.
         """
+        _profiling = serving_profiler._profiling_records is not None
         if _logger.isEnabledFor(logging.DEBUG):
             _logger.debug(
                 f"Getting single raw feature vector for Feature View {self._feature_view_name}, version: {self._feature_view_version} in Feature Store {self._feature_store_name}."
             )
             _logger.debug(f"entry: {entry}, passed features: {passed_features}")
+
+        if _profiling:
+            t0 = time.perf_counter()
         payload = self.build_base_payload(
             metadata_options=metadata_options,
             # This ensures consistency with the sql client behaviour.
@@ -241,18 +246,29 @@ class OnlineStoreRestClientEngine:
         )
         payload["entries"] = entry
         payload["passedFeatures"] = passed_features
+        if _profiling:
+            serving_profiler._record("payload_build", time.perf_counter() - t0)
 
+            t0 = time.perf_counter()
         response = self._online_store_rest_client_api.get_single_raw_feature_vector(
             payload=payload
         )
+        if _profiling:
+            serving_profiler._record("api_get_single_raw", time.perf_counter() - t0)
+
         if return_type != self.RETURN_TYPE_RESPONSE_JSON:
-            return self.convert_rdrs_response_to_feature_value_row(
+            if _profiling:
+                t0 = time.perf_counter()
+            result = self.convert_rdrs_response_to_feature_value_row(
                 row_feature_values=response["features"],
                 detailed_status=response.get("detailedStatus", None),
                 drop_missing=drop_missing,
                 inference_helpers_only=inference_helpers_only,
                 return_type=return_type,
             )
+            if _profiling:
+                serving_profiler._record("response_decode_single", time.perf_counter() - t0)
+            return result
         return response
 
     def get_batch_feature_vectors(
@@ -294,11 +310,15 @@ class OnlineStoreRestClientEngine:
             hsfs.client.exceptions.RestAPIError: If the server response status code is not 200.
             ValueError: If the length of the passed features does not match the length of the entries.
         """
+        _profiling = serving_profiler._profiling_records is not None
         if _logger.isEnabledFor(logging.DEBUG):
             _logger.debug(
                 f"Getting batch raw feature vectors for Feature View {self._feature_view_name}, version: {self._feature_view_version} in Feature Store {self._feature_store_name}."
             )
             _logger.debug(f"entries: {entries}\npassed features: {passed_features}")
+
+        if _profiling:
+            t0 = time.perf_counter()
         payload = self.build_base_payload(
             metadata_options=metadata_options,
             # This ensures consistency with the sql client behaviour.
@@ -318,17 +338,20 @@ class OnlineStoreRestClientEngine:
                 "Length of passed features does not match the length of the entries. "
                 "If some entries do not have passed features, pass an empty dict for those entries."
             )
+        if _profiling:
+            serving_profiler._record("payload_build", time.perf_counter() - t0)
 
+            t0 = time.perf_counter()
         response = self._online_store_rest_client_api.get_batch_raw_feature_vectors(
             payload=payload
         )
+        if _profiling:
+            serving_profiler._record("api_get_batch_raw", time.perf_counter() - t0)
 
         if return_type != self.RETURN_TYPE_RESPONSE_JSON:
-            if _logger.isEnabledFor(logging.DEBUG):
-                _logger.debug(
-                    "Converting batch response to feature value rows for each."
-                )
-            return [
+            if _profiling:
+                t0 = time.perf_counter()
+            result = [
                 self.convert_rdrs_response_to_feature_value_row(
                     row_feature_values=row,
                     detailed_status=detailed_status,
@@ -340,6 +363,9 @@ class OnlineStoreRestClientEngine:
                     response["features"], response.get("detailedStatus", []) or []
                 )
             ]
+            if _profiling:
+                serving_profiler._record("response_decode_batch", time.perf_counter() - t0)
+            return result
         return response
 
     def convert_rdrs_response_to_feature_value_row(

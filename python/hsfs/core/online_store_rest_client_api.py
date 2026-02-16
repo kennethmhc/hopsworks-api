@@ -15,11 +15,13 @@
 #
 import json
 import logging
+import time
 from datetime import date, datetime
 from typing import Any
 
 from hsfs import util
 from hsfs.client import exceptions, online_store_rest_client
+from hsfs.core import serving_profiler
 from hsfs.core.constants import HAS_NUMPY
 from requests import Response
 
@@ -94,18 +96,37 @@ class OnlineStoreRestClientApi:
                     or authorization header (x-api-key) is not properly set.
                 - 500: Internal server error.
         """
+        _profiling = serving_profiler._profiling_records is not None
         if _logger.isEnabledFor(logging.DEBUG):
             _logger.debug(
                 f"Sending request to RonDB Rest Server with payload: {json.dumps(payload, indent=2, cls=NpDatetimeEncoder)}"
             )
-        return self.handle_rdrs_feature_store_response(
-            online_store_rest_client.get_instance().send_request(
-                method="POST",
-                path_params=[self.SINGLE_VECTOR_ENDPOINT],
-                headers={"Content-Type": "application/json"},
-                data=json.dumps(payload, cls=NpDatetimeEncoder),
-            ),
+
+        if _profiling:
+            t0 = time.perf_counter()
+        data = json.dumps(payload, cls=NpDatetimeEncoder)
+        if _profiling:
+            serving_profiler._record("json_serialize", time.perf_counter() - t0)
+
+            t0 = time.perf_counter()
+            profile_http_step = serving_profiler._record
+        else:
+            profile_http_step = None
+        response = online_store_rest_client.get_instance().send_request(
+            method="POST",
+            path_params=[self.SINGLE_VECTOR_ENDPOINT],
+            headers={"Content-Type": "application/json"},
+            data=data,
+            profiling_hook=profile_http_step,
         )
+        if _profiling:
+            serving_profiler._record("http_request", time.perf_counter() - t0)
+
+            t0 = time.perf_counter()
+        result = self.handle_rdrs_feature_store_response(response)
+        if _profiling:
+            serving_profiler._record("response_deserialize", time.perf_counter() - t0)
+        return result
 
     def get_batch_raw_feature_vectors(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Get a list of feature vectors from the feature store.
@@ -139,18 +160,37 @@ class OnlineStoreRestClientApi:
                     or authorization header (x-api-key) is not properly set.
                 - 500: Internal server error.
         """
+        _profiling = serving_profiler._profiling_records is not None
         if _logger.isEnabledFor(logging.DEBUG):
             _logger.debug(
                 f"Sending request to RonDB Rest Server with payload: {json.dumps(payload, indent=2, cls=NpDatetimeEncoder)}"
             )
-        return self.handle_rdrs_feature_store_response(
-            online_store_rest_client.get_instance().send_request(
-                method="POST",
-                path_params=[self.BATCH_VECTOR_ENDPOINT],
-                headers={"Content-Type": "application/json"},
-                data=json.dumps(payload, cls=NpDatetimeEncoder),
-            ),
+
+        if _profiling:
+            t0 = time.perf_counter()
+        data = json.dumps(payload, cls=NpDatetimeEncoder)
+        if _profiling:
+            serving_profiler._record("json_serialize", time.perf_counter() - t0)
+
+            t0 = time.perf_counter()
+            profile_http_step = serving_profiler._record
+        else:
+            profile_http_step = None
+        response = online_store_rest_client.get_instance().send_request(
+            method="POST",
+            path_params=[self.BATCH_VECTOR_ENDPOINT],
+            headers={"Content-Type": "application/json"},
+            data=data,
+            profiling_hook=profile_http_step,
         )
+        if _profiling:
+            serving_profiler._record("http_request", time.perf_counter() - t0)
+
+            t0 = time.perf_counter()
+        result = self.handle_rdrs_feature_store_response(response)
+        if _profiling:
+            serving_profiler._record("response_deserialize", time.perf_counter() - t0)
+        return result
 
     def ping_rondb_rest_server(self) -> int:
         """Ping the RonDB Rest Server to check if it is alive."""

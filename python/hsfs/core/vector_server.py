@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import time
 import warnings
 from base64 import b64decode
 from copy import deepcopy
@@ -45,6 +46,7 @@ from hsfs.client import exceptions, online_store_rest_client
 from hsfs.core import (
     online_store_rest_client_engine,
     online_store_sql_engine,
+    serving_profiler,
 )
 from hsfs.core import (
     transformation_function_engine as tf_engine_mod,
@@ -447,6 +449,10 @@ class VectorServer:
         logging_data: bool = False,
     ) -> pd.DataFrame | pl.DataFrame | np.ndarray | list[Any] | dict[str, Any]:
         """Assembles serving vector from online feature store."""
+        _profiling = serving_profiler._profiling_records is not None
+        if _profiling:
+            t_total = time.perf_counter()
+
         online_client_choice = self.which_client_and_ensure_initialised(
             force_rest_client=force_rest_client, force_sql_client=force_sql_client
         )
@@ -468,12 +474,17 @@ class VectorServer:
             for key, value in entry.items():
                 request_parameters.setdefault(key, value)
 
+        if _profiling:
+            t0 = time.perf_counter()
         rondb_entry = self.validate_entry(
             entry=entry,
             allow_missing=allow_missing,
             passed_features=passed_features,
             vector_db_features=vector_db_features,
         )
+        if _profiling:
+            serving_profiler._record("validate_entry", time.perf_counter() - t0)
+
         if len(rondb_entry) == 0:
             if _logger.isEnabledFor(logging.DEBUG):
                 _logger.debug("Empty entry for rondb, skipping fetching.")
@@ -481,11 +492,15 @@ class VectorServer:
         elif online_client_choice == self.DEFAULT_REST_CLIENT:
             if _logger.isEnabledFor(logging.DEBUG):
                 _logger.debug("get_feature_vector Online REST client")
+            if _profiling:
+                t0 = time.perf_counter()
             serving_vector = self.rest_client_engine.get_single_feature_vector(
                 rondb_entry,
                 drop_missing=not allow_missing,
                 return_type=self.rest_client_engine.RETURN_TYPE_FEATURE_VALUE_DICT,
             )
+            if _profiling:
+                serving_profiler._record("rest_fetch_single_total", time.perf_counter() - t0)
         else:
             if _logger.isEnabledFor(logging.DEBUG):
                 _logger.debug("get_feature_vector Online SQL client")
@@ -499,6 +514,8 @@ class VectorServer:
             transform=transform, on_demand_features=on_demand_features
         )
 
+        if _profiling:
+            t0 = time.perf_counter()
         vector = self.assemble_feature_vector(
             result_dict=serving_vector,
             passed_values=passed_features or {},
@@ -511,6 +528,9 @@ class VectorServer:
             transformation_context=transformation_context,
             logging_meta_data=logging_meta_data,
         )
+        if _profiling:
+            serving_profiler._record("assemble_feature_vector", time.perf_counter() - t0)
+
         if logging_meta_data is not None:
             logging_meta_data.serving_keys.append(entry)
             logging_meta_data.request_parameters.append(request_parameters_copy or {})
@@ -528,7 +548,9 @@ class VectorServer:
                 ]
             )
 
-        return self.handle_feature_vector_return_type(
+        if _profiling:
+            t0 = time.perf_counter()
+        result = self.handle_feature_vector_return_type(
             vector,
             batch=False,
             inference_helper=False,
@@ -537,6 +559,10 @@ class VectorServer:
             on_demand_feature=on_demand_features,
             logging_meta_data=logging_meta_data,
         )
+        if _profiling:
+            serving_profiler._record("format_return_type", time.perf_counter() - t0)
+            serving_profiler._record("get_feature_vector total", time.perf_counter() - t_total)
+        return result
 
     def get_feature_vectors(
         self,
@@ -554,6 +580,10 @@ class VectorServer:
         logging_data: bool = False,
     ) -> pd.DataFrame | pl.DataFrame | np.ndarray | list[Any] | list[dict[str, Any]]:
         """Assembles serving vector from online feature store."""
+        _profiling = serving_profiler._profiling_records is not None
+        if _profiling:
+            t_total = time.perf_counter()
+
         if passed_features is None:
             passed_features = []
         # Assertions on passed_features and vector_db_features
@@ -620,6 +650,8 @@ class VectorServer:
             transform=transform, on_demand_features=on_demand_features
         )
 
+        if _profiling:
+            t0 = time.perf_counter()
         for (idx, entry), passed, vector_features in itertools.zip_longest(
             enumerate(entries),
             passed_features,
@@ -635,15 +667,21 @@ class VectorServer:
                 rondb_entries.append(rondb_entry)
             else:
                 skipped_empty_entries.append(idx)
+        if _profiling:
+            serving_profiler._record("validate_entry_loop", time.perf_counter() - t0)
 
         if online_client_choice == self.DEFAULT_REST_CLIENT and len(rondb_entries) > 0:
             if _logger.isEnabledFor(logging.DEBUG):
                 _logger.debug("get_batch_feature_vector Online REST client")
+            if _profiling:
+                t0 = time.perf_counter()
             batch_results = self.rest_client_engine.get_batch_feature_vectors(
                 entries=rondb_entries,
                 drop_missing=not allow_missing,
                 return_type=self.rest_client_engine.RETURN_TYPE_FEATURE_VALUE_DICT,
             )
+            if _profiling:
+                serving_profiler._record("rest_fetch_batch_total", time.perf_counter() - t0)
         elif len(rondb_entries) > 0:
             # get result row
             if _logger.isEnabledFor(logging.DEBUG):
@@ -658,8 +696,8 @@ class VectorServer:
                 _logger.debug("Empty entries for rondb, skipping fetching.")
             batch_results = []
 
-        if _logger.isEnabledFor(logging.DEBUG):
-            _logger.debug("Assembling feature vectors from batch results")
+        if _profiling:
+            t0 = time.perf_counter()
         next_skipped = (
             skipped_empty_entries.pop(0) if len(skipped_empty_entries) > 0 else None
         )
@@ -734,8 +772,11 @@ class VectorServer:
 
             if vector is not None:
                 vectors.append(vector)
+        if _profiling:
+            serving_profiler._record("assemble_feature_vector_loop", time.perf_counter() - t0)
 
-        return self.handle_feature_vector_return_type(
+            t0 = time.perf_counter()
+        result = self.handle_feature_vector_return_type(
             vectors,
             batch=True,
             inference_helper=False,
@@ -744,6 +785,10 @@ class VectorServer:
             on_demand_feature=transform,
             logging_meta_data=logging_meta_data,
         )
+        if _profiling:
+            serving_profiler._record("format_return_type", time.perf_counter() - t0)
+            serving_profiler._record("get_feature_vectors total", time.perf_counter() - t_total)
+        return result
 
     def assemble_feature_vector(
         self,
@@ -800,13 +845,20 @@ class VectorServer:
                 " or provide the feature as passed_feature. "
                 f"2. Required entries [{', '.join(self.required_serving_keys)}] are not provided."
             )
+        _profiling = serving_profiler._profiling_records is not None
         if len(self.return_feature_value_handlers) > 0:
+            if _profiling:
+                t0 = time.perf_counter()
             self.apply_return_value_handlers(result_dict, client=client)
+            if _profiling:
+                serving_profiler._record("return_value_handlers", time.perf_counter() - t0)
         feature_dict, encoded_feature_dict = result_dict, result_dict
         if (
             len(self.model_dependent_transformation_functions) > 0
             or len(self.on_demand_transformation_functions) > 0
         ):
+            if _profiling:
+                t0 = time.perf_counter()
             feature_dict, encoded_feature_dict = self.apply_transformation(
                 result_dict.copy(),
                 request_parameters or {},
@@ -815,6 +867,8 @@ class VectorServer:
                 on_demand_features=on_demand_features,
                 logging_meta_data=logging_meta_data,
             )
+            if _profiling:
+                serving_profiler._record("transformations", time.perf_counter() - t0)
         if _logger.isEnabledFor(logging.DEBUG):
             _logger.debug(
                 "Assembled and transformed dict feature vector: %s", result_dict
@@ -1384,6 +1438,7 @@ class VectorServer:
             feature_vector: The untransformed feature vector with untransformed features.
             encoded_feature_dict: The transformed feature vector with transformed features.
         """
+        _profiling = serving_profiler._profiling_records is not None
         feature_dict = row_dict
         encoded_feature_dict = None
 
@@ -1394,6 +1449,8 @@ class VectorServer:
             )
 
             # Apply on-demand transformations
+            if _profiling:
+                t0 = time.perf_counter()
             feature_dict = tf_engine_mod.TransformationFunctionEngine.apply_transformation_functions(
                 data=feature_dict,
                 online=True,
@@ -1402,6 +1459,8 @@ class VectorServer:
                 transformation_functions=self.on_demand_transformation_functions,
                 expected_features=set(self._on_demand_feature_vector_col_name),
             )
+            if _profiling:
+                serving_profiler._record("on_demand_transformations", time.perf_counter() - t0)
             if logging_meta_data:
                 logging_meta_data.untransformed_features.append(
                     [
@@ -1412,6 +1471,8 @@ class VectorServer:
 
         if transform or logging_meta_data:
             # Apply model dependent transformations
+            if _profiling:
+                t0 = time.perf_counter()
             encoded_feature_dict = tf_engine_mod.TransformationFunctionEngine.apply_transformation_functions(
                 data=feature_dict,
                 online=True,
@@ -1419,6 +1480,8 @@ class VectorServer:
                 transformation_functions=self.model_dependent_transformation_functions,
                 expected_features=set(self.transformed_feature_vector_col_name),
             )
+            if _profiling:
+                serving_profiler._record("model_dependent_transformations", time.perf_counter() - t0)
             if logging_meta_data:
                 logging_meta_data.transformed_features.append(
                     [
