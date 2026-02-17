@@ -249,7 +249,7 @@ class TestSendRequestPycurl:
         )
 
         mock_curl.perform.assert_called_once()
-        mock_curl.close.assert_called_once()
+        mock_curl.close.assert_not_called()
         assert response.status_code == 200
         assert "feature_store" in response.url
 

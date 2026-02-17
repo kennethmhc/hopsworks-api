@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import time
+from datetime import timedelta
 from io import BytesIO
 from typing import Any
 from typing import Callable
@@ -139,6 +141,11 @@ class OnlineStoreRestClientSingleton:
                 _logger.debug("Closing existing session.")
             self._session.close()
             delattr(self, "_session")
+        if hasattr(self, "_pycurl_handle") and self._pycurl_handle is not None:
+            if _logger.isEnabledFor(logging.DEBUG):
+                _logger.debug("Closing existing pycurl handle.")
+            self._pycurl_handle.close()
+            self._pycurl_handle = None
         self._setup_rest_client(
             transport=transport,
             optional_config=optional_config,
@@ -230,6 +237,24 @@ class OnlineStoreRestClientSingleton:
         assert self._current_config is not None, (
             "Online Store REST Client Configuration failed to initialise."
         )
+
+    def _get_pycurl_handle(self):
+        """Get or create a persistent pycurl handle for connection reuse."""
+        pycurl = self._get_pycurl_module()
+
+        if not hasattr(self, "_pycurl_handle") or self._pycurl_handle is None:
+            self._pycurl_handle = pycurl.Curl()
+            # Keep connection reuse enabled on this persistent handle.
+            self._pycurl_handle.setopt(pycurl.FRESH_CONNECT, 0)
+            self._pycurl_handle.setopt(pycurl.FORBID_REUSE, 0)
+            # Enable automatic decompression for compressed HTTP responses.
+            self._pycurl_handle.setopt(pycurl.ACCEPT_ENCODING, "")
+        return self._pycurl_handle
+
+    def _get_pycurl_module(self):
+        if not hasattr(self, "_pycurl_module") or self._pycurl_module is None:
+            self._pycurl_module = importlib.import_module("pycurl")
+        return self._pycurl_module
 
     def _get_default_client_config(self) -> dict[str, Any]:
         if _logger.isEnabledFor(logging.DEBUG):
@@ -371,8 +396,6 @@ class OnlineStoreRestClientSingleton:
         data: str | None = None,
         profiling_hook: Callable[[str, float], None] | None = None,
     ) -> requests.Response:
-        import pycurl
-
         if profiling_hook is not None:
             t0 = time.perf_counter()
 
@@ -391,7 +414,8 @@ class OnlineStoreRestClientSingleton:
         if profiling_hook is not None:
             t0 = time.perf_counter()
 
-        c = pycurl.Curl()
+        pycurl = self._get_pycurl_module()
+        c = self._get_pycurl_handle()
         buffer = BytesIO()
         response_headers = BytesIO()
 
@@ -401,16 +425,16 @@ class OnlineStoreRestClientSingleton:
 
         if method.upper() == "POST":
             c.setopt(c.POST, 1)
-            if data:
-                c.setopt(c.POSTFIELDS, data)
+            c.setopt(c.POSTFIELDS, data if data is not None else "")
         elif method.upper() == "GET":
             c.setopt(c.HTTPGET, 1)
         elif method.upper() == "PUT":
             c.setopt(c.CUSTOMREQUEST, "PUT")
-            if data:
-                c.setopt(c.POSTFIELDS, data)
+            c.setopt(c.POSTFIELDS, data if data is not None else "")
         else:
             c.setopt(c.CUSTOMREQUEST, method.upper())
+            if data is not None:
+                c.setopt(c.POSTFIELDS, data)
 
         all_headers = dict(headers) if headers else {}
         if self._auth is not None:
@@ -419,6 +443,8 @@ class OnlineStoreRestClientSingleton:
         if all_headers:
             header_list = [f"{k}: {v}" for k, v in all_headers.items()]
             c.setopt(c.HTTPHEADER, header_list)
+        else:
+            c.setopt(c.HTTPHEADER, [])
 
         # SSL configuration – mirror what _setup_rest_client sets on the session
         if not self._current_config[self.VERIFY_CERTS]:
@@ -450,7 +476,6 @@ class OnlineStoreRestClientSingleton:
         ttfb_time = c.getinfo(c.STARTTRANSFER_TIME)
         download_time = total_time - ttfb_time
         status_code = c.getinfo(c.RESPONSE_CODE)
-        c.close()
 
         if profiling_hook is not None:
             profiling_hook("http_send", total_time)
@@ -470,8 +495,6 @@ class OnlineStoreRestClientSingleton:
                 header_dict[key.strip()] = value.strip()
 
         resp.headers = requests.structures.CaseInsensitiveDict(header_dict)
-        from datetime import timedelta
-
         resp.elapsed = timedelta(seconds=total_time)
 
         return resp
