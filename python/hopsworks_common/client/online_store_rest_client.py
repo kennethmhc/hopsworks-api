@@ -469,7 +469,9 @@ class OnlineStoreRestClientSingleton:
                 header_dict[key.strip()] = value.strip()
 
         resp.headers = requests.structures.CaseInsensitiveDict(header_dict)
-        resp.elapsed = requests.packages.urllib3.response.timedelta(seconds=total_time)
+        from datetime import timedelta
+
+        resp.elapsed = timedelta(seconds=total_time)
 
         return resp
 
