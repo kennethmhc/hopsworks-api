@@ -423,6 +423,11 @@ class FeatureView:
                 - `use_ssl`: boolean, optional.
                   Use SSL to connect to the online store.
                   Defaults to True.
+                - `http_engine`: string, optional.
+                  The HTTP engine to use for requests.
+                  Supported values are `"requests"` (default) and `"pycurl"`.
+                  The `"pycurl"` engine requires the `pycurl` package to be installed
+                  and can offer lower latency for high-throughput workloads.
 
             feature_logger:
                 Custom feature logger which [`feature_view.log()`](#log) uses to log feature vectors.

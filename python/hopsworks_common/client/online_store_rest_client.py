@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import time
+from io import BytesIO
 from typing import Any
 from typing import Callable
 from warnings import warn
@@ -83,12 +84,15 @@ class OnlineStoreRestClientSingleton:
     TIMEOUT = "timeout"
     SERVER_API_VERSION = "server_api_version"
     API_KEY = "api_key"
+    HTTP_ENGINE = "http_engine"
     _DEFAULT_ONLINE_STORE_REST_CLIENT_PORT = 4406
     _DEFAULT_ONLINE_STORE_REST_CLIENT_TIMEOUT_SECOND = 2
     _DEFAULT_ONLINE_STORE_REST_CLIENT_VERIFY_CERTS = True
     _DEFAULT_ONLINE_STORE_REST_CLIENT_USE_SSL = True
     _DEFAULT_ONLINE_STORE_REST_CLIENT_SERVER_API_VERSION = "0.1.0"
     _DEFAULT_ONLINE_STORE_REST_CLIENT_HTTP_AUTHORIZATION = "X-API-KEY"
+    _DEFAULT_HTTP_ENGINE = "requests"
+    _SUPPORTED_HTTP_ENGINES = ("requests", "pycurl")
 
     def __init__(
         self,
@@ -170,6 +174,15 @@ class OnlineStoreRestClientSingleton:
                 )
             self._current_config.update(optional_config)
 
+        engine = self._current_config.get(self.HTTP_ENGINE, self._DEFAULT_HTTP_ENGINE)
+        if engine not in self._SUPPORTED_HTTP_ENGINES:
+            raise ValueError(
+                f"Unsupported http_engine '{engine}'. "
+                f"Supported engines: {self._SUPPORTED_HTTP_ENGINES}"
+            )
+        if _logger.isEnabledFor(logging.DEBUG):
+            _logger.debug(f"Using HTTP engine: {engine}")
+
         self._set_auth(optional_config)
         if not hasattr(self, "_session") or not self._session:
             if _logger.isEnabledFor(logging.DEBUG):
@@ -238,6 +251,7 @@ class OnlineStoreRestClientSingleton:
             self.USE_SSL: self._DEFAULT_ONLINE_STORE_REST_CLIENT_USE_SSL,
             self.SERVER_API_VERSION: self._DEFAULT_ONLINE_STORE_REST_CLIENT_SERVER_API_VERSION,
             self.HTTP_AUTHORIZATION: self._DEFAULT_ONLINE_STORE_REST_CLIENT_HTTP_AUTHORIZATION,
+            self.HTTP_ENGINE: self._DEFAULT_HTTP_ENGINE,
         }
 
     def _get_default_dynamic_parameters_config(
@@ -303,7 +317,7 @@ class OnlineStoreRestClientSingleton:
             )
         return default_url
 
-    def send_request(
+    def send_request_session(
         self,
         method: str,
         path_params: list[str],
@@ -348,6 +362,148 @@ class OnlineStoreRestClientSingleton:
             profiling_hook("http_ttfb", http_ttfb)
             profiling_hook("http_body_download", http_send_elapsed - http_ttfb)
         return response
+
+    def send_request_pycurl(
+        self,
+        method: str,
+        path_params: list[str],
+        headers: dict[str, Any] | None = None,
+        data: str | None = None,
+        profiling_hook: Callable[[str, float], None] | None = None,
+    ) -> requests.Response:
+        import pycurl
+
+        if profiling_hook is not None:
+            t0 = time.perf_counter()
+
+        url_obj = self._base_url.copy()
+        url_obj.path.segments.extend(path_params)
+        final_url = url_obj.url
+
+        if profiling_hook is not None:
+            profiling_hook("http_build_url", time.perf_counter() - t0)
+
+        if _logger.isEnabledFor(logging.DEBUG):
+            _logger.debug(f"Sending {method} request to {final_url}.")
+            _logger.debug(f"Provided Data: {data}")
+            _logger.debug(f"Provided Headers: {headers}")
+
+        if profiling_hook is not None:
+            t0 = time.perf_counter()
+
+        c = pycurl.Curl()
+        buffer = BytesIO()
+        response_headers = BytesIO()
+
+        c.setopt(c.URL, final_url)
+        c.setopt(c.WRITEDATA, buffer)
+        c.setopt(c.HEADERFUNCTION, response_headers.write)
+
+        if method.upper() == "POST":
+            c.setopt(c.POST, 1)
+            if data:
+                c.setopt(c.POSTFIELDS, data)
+        elif method.upper() == "GET":
+            c.setopt(c.HTTPGET, 1)
+        elif method.upper() == "PUT":
+            c.setopt(c.CUSTOMREQUEST, "PUT")
+            if data:
+                c.setopt(c.POSTFIELDS, data)
+        else:
+            c.setopt(c.CUSTOMREQUEST, method.upper())
+
+        if headers:
+            header_list = [f"{k}: {v}" for k, v in headers.items()]
+            c.setopt(c.HTTPHEADER, header_list)
+
+        if hasattr(self, "auth") and isinstance(self.auth, tuple):
+            c.setopt(c.USERPWD, f"{self.auth[0]}:{self.auth[1]}")
+
+        timeout_val = self._current_config[self.TIMEOUT]
+        final_timeout = timeout_val if timeout_val < 500 else timeout_val / 1000.0
+        c.setopt(c.TIMEOUT, int(final_timeout))
+
+        if profiling_hook is not None:
+            profiling_hook("http_prepare_request", time.perf_counter() - t0)
+
+        if profiling_hook is not None:
+            t0 = time.perf_counter()
+
+        try:
+            c.perform()
+        except pycurl.error as e:
+            raise requests.RequestException(f"PycURL error: {e}")
+
+        total_time = c.getinfo(c.TOTAL_TIME)
+        ttfb_time = c.getinfo(c.STARTTRANSFER_TIME)
+        download_time = total_time - ttfb_time
+        status_code = c.getinfo(c.RESPONSE_CODE)
+        c.close()
+
+        if profiling_hook is not None:
+            profiling_hook("http_send", total_time)
+            profiling_hook("http_ttfb", ttfb_time)
+            profiling_hook("http_body_download", download_time)
+
+        resp = requests.Response()
+        resp.status_code = status_code
+        resp.url = final_url
+        resp._content = buffer.getvalue()
+
+        header_str = response_headers.getvalue().decode("iso-8859-1")
+        header_dict = {}
+        for line in header_str.splitlines():
+            if ":" in line:
+                key, value = line.split(":", 1)
+                header_dict[key.strip()] = value.strip()
+
+        resp.headers = requests.structures.CaseInsensitiveDict(header_dict)
+        resp.elapsed = requests.packages.urllib3.response.timedelta(seconds=total_time)
+
+        return resp
+
+    def send_request(
+        self,
+        method: str,
+        path_params: list[str],
+        headers: dict[str, Any] | None = None,
+        data: str | None = None,
+        profiling_hook: Callable[[str, float], None] | None = None,
+    ) -> requests.Response:
+        """Send a request using the configured HTTP engine.
+
+        The engine is selected via the ``http_engine`` key in the client
+        configuration (``optional_config``).  Supported values are
+        ``"requests"`` (default, uses :pymod:`requests.Session`) and
+        ``"pycurl"`` (uses :pymod:`pycurl`).
+
+        Parameters:
+            method: HTTP method (e.g. ``"GET"``, ``"POST"``).
+            path_params: URL path segments appended to the base URL.
+            headers: Optional HTTP headers.
+            data: Optional request body.
+            profiling_hook: Optional callback ``(label, seconds)`` for
+                recording profiling metrics.
+
+        Returns:
+            :class:`requests.Response` – the server response.
+        """
+        engine = self._current_config.get(self.HTTP_ENGINE, self._DEFAULT_HTTP_ENGINE)
+        if engine == "pycurl":
+            return self.send_request_pycurl(
+                method=method,
+                path_params=path_params,
+                headers=headers,
+                data=data,
+                profiling_hook=profiling_hook,
+            )
+        return self.send_request_session(
+            method=method,
+            path_params=path_params,
+            headers=headers,
+            data=data,
+            profiling_hook=profiling_hook,
+        )
 
     def _check_hopsworks_connection(self) -> None:
         if _logger.isEnabledFor(logging.DEBUG):
