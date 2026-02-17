@@ -412,12 +412,13 @@ class OnlineStoreRestClientSingleton:
         else:
             c.setopt(c.CUSTOMREQUEST, method.upper())
 
-        if headers:
-            header_list = [f"{k}: {v}" for k, v in headers.items()]
-            c.setopt(c.HTTPHEADER, header_list)
+        all_headers = dict(headers) if headers else {}
+        if self._auth is not None:
+            all_headers[self._current_config[self.HTTP_AUTHORIZATION]] = self._auth._token
 
-        if hasattr(self, "auth") and isinstance(self.auth, tuple):
-            c.setopt(c.USERPWD, f"{self.auth[0]}:{self.auth[1]}")
+        if all_headers:
+            header_list = [f"{k}: {v}" for k, v in all_headers.items()]
+            c.setopt(c.HTTPHEADER, header_list)
 
         # SSL configuration – mirror what _setup_rest_client sets on the session
         if not self._current_config[self.VERIFY_CERTS]:

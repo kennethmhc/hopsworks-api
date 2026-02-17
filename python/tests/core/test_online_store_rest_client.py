@@ -253,6 +253,44 @@ class TestSendRequestPycurl:
         assert response.status_code == 200
         assert "feature_store" in response.url
 
+    def test_send_request_pycurl_sends_api_key_header(self, mocker):
+        instance = _create_client_stub(mocker, {"http_engine": "pycurl"})
+
+        mock_curl = mocker.Mock()
+        mock_curl.TOTAL_TIME = 1
+        mock_curl.STARTTRANSFER_TIME = 2
+        mock_curl.RESPONSE_CODE = 3
+        mock_curl.URL = 10001
+        mock_curl.WRITEDATA = 10002
+        mock_curl.HEADERFUNCTION = 10003
+        mock_curl.HTTPGET = 10004
+        mock_curl.HTTPHEADER = 10006
+        mock_curl.SSL_VERIFYPEER = 10007
+        mock_curl.SSL_VERIFYHOST = 10008
+        mock_curl.CAINFO = 10009
+        mock_curl.TIMEOUT = 10010
+        mock_curl.getinfo.side_effect = lambda key: {
+            1: 0.1, 2: 0.05, 3: 200
+        }[key]
+
+        mock_pycurl_module = mocker.Mock()
+        mock_pycurl_module.Curl.return_value = mock_curl
+        mocker.patch.dict("sys.modules", {"pycurl": mock_pycurl_module})
+
+        instance.send_request_pycurl("GET", ["ping"])
+
+        # Find the HTTPHEADER setopt call and verify X-API-KEY is present
+        httpheader_calls = [
+            call[0][1]
+            for call in mock_curl.setopt.call_args_list
+            if call[0][0] == mock_curl.HTTPHEADER
+        ]
+        assert len(httpheader_calls) == 1
+        header_list = httpheader_calls[0]
+        api_key_headers = [h for h in header_list if h.startswith("X-API-KEY:")]
+        assert len(api_key_headers) == 1
+        assert "test_key" in api_key_headers[0]
+
     def test_send_request_pycurl_ssl_verify_disabled(self, mocker):
         instance = _create_client_stub(
             mocker, {"http_engine": "pycurl", "verify_certs": False}
