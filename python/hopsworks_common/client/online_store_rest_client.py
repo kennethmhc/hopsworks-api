@@ -419,6 +419,17 @@ class OnlineStoreRestClientSingleton:
         if hasattr(self, "auth") and isinstance(self.auth, tuple):
             c.setopt(c.USERPWD, f"{self.auth[0]}:{self.auth[1]}")
 
+        # SSL configuration – mirror what _setup_rest_client sets on the session
+        if not self._current_config[self.VERIFY_CERTS]:
+            c.setopt(c.SSL_VERIFYPEER, 0)
+            c.setopt(c.SSL_VERIFYHOST, 0)
+        else:
+            c.setopt(c.SSL_VERIFYPEER, 1)
+            c.setopt(c.SSL_VERIFYHOST, 2)
+            ca_certs = self._current_config.get(self.CA_CERTS)
+            if ca_certs:
+                c.setopt(c.CAINFO, ca_certs)
+
         timeout_val = self._current_config[self.TIMEOUT]
         final_timeout = timeout_val if timeout_val < 500 else timeout_val / 1000.0
         c.setopt(c.TIMEOUT, int(final_timeout))
