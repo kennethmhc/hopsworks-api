@@ -163,6 +163,49 @@ class ServingProfiler:
                 result[step] = totals[step]
         return result
 
+    @staticmethod
+    def _collect_per_step_values(
+        records: list[tuple[str, float]],
+    ) -> dict[str, list[float]]:
+        """Group records into per-step lists of elapsed values."""
+        values: dict[str, list[float]] = defaultdict(list)
+        for step, elapsed in records:
+            values[step].append(elapsed)
+        return values
+
+    @staticmethod
+    def _percentile(sorted_vals: list[float], pct: float) -> float:
+        """Compute *pct*-th percentile from a **pre-sorted** list (linear interpolation)."""
+        n = len(sorted_vals)
+        if n == 1:
+            return sorted_vals[0]
+        k = (n - 1) * (pct / 100.0)
+        f = math.floor(k)
+        c = math.ceil(k)
+        if f == c:
+            return sorted_vals[int(k)]
+        return sorted_vals[f] * (c - k) + sorted_vals[c] * (k - f)
+
+    @classmethod
+    def _compute_percentile_data(
+        cls,
+        records: list[tuple[str, float]],
+        percentiles: tuple[float, ...] = (50, 90, 95, 99),
+    ) -> dict[str, dict[str, float]]:
+        """Return ``{step: {"p50": v, "p90": v, …, "min": v, "max": v, "count": n}}``."""
+        per_step = cls._collect_per_step_values(records)
+        result: dict[str, dict[str, float]] = {}
+        for step, vals in per_step.items():
+            sv = sorted(vals)
+            entry: dict[str, float] = {}
+            for p in percentiles:
+                entry[f"p{int(p)}"] = cls._percentile(sv, p)
+            entry["min"] = sv[0]
+            entry["max"] = sv[-1]
+            entry["count"] = len(sv)
+            result[step] = entry
+        return result
+
     def _aggregate(self, aggregation: str) -> dict[str, float]:
         if _profiling_records is None:
             return {}
@@ -280,6 +323,107 @@ class ServingProfiler:
             )
         print("\u2514" + "\u2500" * step_width + "\u2534" + "\u2500" * time_width + "\u2518")
 
+    @classmethod
+    def _build_percentile_tree_lines(
+        cls, pdata: dict[str, dict[str, float]]
+    ) -> list[tuple[str, ...]]:
+        """Build tree lines with percentile columns.
+
+        Each element is ``(display_label, p50, p90, p95, p99, min, max, count)``.
+        """
+        _COLS = ("p50", "p90", "p95", "p99", "min", "max", "count")
+
+        root_steps = [
+            s
+            for s in ["get_feature_vector total", "get_feature_vectors total"]
+            if s in pdata
+        ]
+        if not root_steps:
+            root_steps = list(pdata.keys())
+
+        lines: list[tuple[str, ...]] = []
+        rendered: set[str] = set()
+
+        def _fmt(entry: dict[str, float]) -> tuple[str, ...]:
+            return tuple(
+                f"{entry[c]:.4f}" if c != "count" else str(int(entry[c]))
+                for c in _COLS
+            )
+
+        def _render(step: str, prefix: str, is_last: bool):
+            if step not in pdata:
+                return
+            rendered.add(step)
+            connector = "\u2514\u2500 " if is_last else "\u251c\u2500 "
+            display = f"{prefix}{connector}{step}"
+            lines.append((display, *_fmt(pdata[step])))
+
+            children = _STEP_HIERARCHY.get(step, [])
+            present_children = [c for c in children if c in pdata]
+            child_prefix = prefix + ("   " if is_last else "\u2502  ")
+            for i, child in enumerate(present_children):
+                _render(child, child_prefix, i == len(present_children) - 1)
+
+        for root in root_steps:
+            rendered.add(root)
+            lines.append((root, *_fmt(pdata[root])))
+            children = _STEP_HIERARCHY.get(root, [])
+            present_children = [c for c in children if c in pdata]
+            for j, child in enumerate(present_children):
+                _render(child, "", j == len(present_children) - 1)
+
+        for step in pdata:
+            if step not in rendered:
+                lines.append((step, *_fmt(pdata[step])))
+
+        return lines
+
+    @staticmethod
+    def _print_percentile_table(
+        lines: list[tuple[str, ...]], header: str
+    ) -> None:
+        """Print a multi-column percentile table with box-drawing borders."""
+        if not lines:
+            return
+
+        col_headers = ("Step", "p50 (s)", "p90 (s)", "p95 (s)", "p99 (s)", "min (s)", "max (s)", "count")
+        ncols = len(col_headers)
+
+        col_widths: list[int] = []
+        for ci in range(ncols):
+            w = len(col_headers[ci]) + 2
+            for row in lines:
+                w = max(w, len(row[ci]) + 2)
+            col_widths.append(w)
+
+        def _sep(left: str, mid: str, right: str, fill: str = "\u2500") -> str:
+            return left + mid.join(fill * w for w in col_widths) + right
+
+        print(f"\n{header}")
+        print(_sep("\u250c", "\u252c", "\u2510"))
+        # Header row
+        hdr = "\u2502"
+        for ci, ch in enumerate(col_headers):
+            if ci == 0:
+                hdr += " " + ch.ljust(col_widths[ci] - 1)
+            else:
+                hdr += ch.rjust(col_widths[ci] - 1) + " "
+            hdr += "\u2502"
+        print(hdr)
+        print(_sep("\u251c", "\u253c", "\u2524"))
+        # Data rows
+        for row in lines:
+            line = "\u2502"
+            for ci in range(ncols):
+                cell = row[ci] if ci < len(row) else ""
+                if ci == 0:
+                    line += " " + cell.ljust(col_widths[ci] - 1)
+                else:
+                    line += cell.rjust(col_widths[ci] - 1) + " "
+                line += "\u2502"
+            print(line)
+        print(_sep("\u2514", "\u2534", "\u2518"))
+
     def print_summary(self, aggregation: str = "sum"):
         """Print a formatted timing breakdown.
 
@@ -288,14 +432,19 @@ class ServingProfiler:
         printed showing only the steady-state portion of the run (i.e. after
         the first 20 % of requests have been discarded).
 
+        Percentile statistics (p50, p90, p95, p99, min, max) are printed
+        whenever there are at least two samples for any step.
+
         Parameters:
             aggregation: How to aggregate across multiple calls.
                 "sum" (default) shows total time, "mean" shows average per call.
         """
-        data = self._aggregate(aggregation)
-        if not data:
+        if _profiling_records is None or not _profiling_records:
             print("No profiling data collected.")
             return
+
+        all_records = list(_profiling_records)
+        data = self._aggregate_records(all_records, aggregation)
 
         agg_label = f" (aggregation={aggregation})" if aggregation != "sum" else ""
 
@@ -305,13 +454,21 @@ class ServingProfiler:
             lines, f"Serving Profiler Summary{agg_label}"
         )
 
+        # Overall percentile statistics (only when there are repeated samples)
+        pdata = self._compute_percentile_data(all_records)
+        has_multiple = any(v["count"] >= 2 for v in pdata.values())
+        if has_multiple:
+            plines = self._build_percentile_tree_lines(pdata)
+            self._print_percentile_table(
+                plines, "Percentile Statistics (all requests)"
+            )
+
         # Post-warm-up summary
         if self._warmup_pct > 0:
             warmup_records, post_warmup_records = self._split_records_by_warmup()
             if warmup_records and post_warmup_records:
                 total_requests = sum(
-                    1 for step, _ in (_profiling_records or [])
-                    if step in _ROOT_STEPS
+                    1 for step, _ in all_records if step in _ROOT_STEPS
                 )
                 warmup_count = max(1, math.ceil(total_requests * self._warmup_pct))
 
@@ -331,3 +488,16 @@ class ServingProfiler:
                     f"Post-Warm-up Summary (remaining {total_requests - warmup_count} "
                     f"requests)",
                 )
+
+                # Post-warm-up percentile statistics
+                post_pdata = self._compute_percentile_data(post_warmup_records)
+                post_has_multiple = any(
+                    v["count"] >= 2 for v in post_pdata.values()
+                )
+                if post_has_multiple:
+                    post_plines = self._build_percentile_tree_lines(post_pdata)
+                    self._print_percentile_table(
+                        post_plines,
+                        f"Percentile Statistics (post-warm-up, "
+                        f"{total_requests - warmup_count} requests)",
+                    )
